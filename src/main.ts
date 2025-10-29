@@ -31,7 +31,6 @@ const getScreenResolution = () => {
 const { width: screenWidth, height: screenHeight } = getScreenResolution();
 
 let skipUsernames: string[] = [];
-let usernameIndices: { [prefix: string]: { phase: number; index1: number; index2: number } } = {};
 if (started) {
     app.quit();
 }
@@ -89,6 +88,9 @@ const createWindow = (options?: { x?: number; y?: number; width?: number; height
     } else {
         window.loadFile(path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}/index.html`));
     }
+
+    window.webContents.openDevTools();
+
     return window;
 };
 
@@ -132,24 +134,17 @@ app.on('ready', () => {
                         const onUsernameGenerated = (username: string) => {
                             skipUsernames.push(username);
                         };
-
-                        const onIndexUpdated = (phase: number, index1: number, index2: number) => {
-                            usernameIndices[usernamePrefix] = { phase, index1, index2 };
-                        };
-
-                        const vlcmThread = new VLCMThread(
+                        const vlcmThread = new VLCMThread({
                             skipUsernames,
                             onUsernameGenerated,
-                            usernameIndices[usernamePrefix],
-                            onIndexUpdated,
-                            {
+                            gridLayout: {
                                 x: position.x,
                                 y: position.y,
                                 width: windowWidth,
                                 height: windowHeight
                             },
                             proxyUrl
-                        );
+                        });
                         await vlcmThread.init();
 
                         vlcmThread.on('progress', (data) => {

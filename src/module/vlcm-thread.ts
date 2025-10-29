@@ -9,11 +9,6 @@ const MAX_USERNAME_LENGTH = 24;
 const PASSWORD_LENGTH = 24;
 const DEFAULT_GRID_WIDTH = 1024;
 const DEFAULT_GRID_HEIGHT = 728;
-const PHASE_1 = 1;
-const PHASE_2 = 2;
-const PHASE_3 = 3;
-const LETTERS = 'abcdefghijklmnopqrstuvwxyz';
-const DIGITS = '0123456789';
 const TIMEOUT_MS = 5000;
 
 interface GridLayout {
@@ -29,37 +24,28 @@ interface ProxyConfig {
     password?: string;
 }
 
+interface VLCMThreadOptions {
+    skipUsernames?: string[];
+    onUsernameGenerated?: (username: string) => void;
+    gridLayout?: GridLayout;
+    proxyUrl?: string;
+}
+
 class VLCMThread extends EventEmitter {
-    private static nextStartIndex = 0;
     private page: GhostPage | null = null;
     private browser: GhostBrowser | null = null;
     private readonly captchaSolver = new ZingCaptchaSolver();
     private readonly threadId: string;
     private readonly skipUsernames: string[];
     private readonly onUsernameGenerated: (username: string) => void;
-    private phase: number;
-    private index1: number;
-    private index2: number;
-    private readonly onIndexUpdated: (phase: number, index1: number, index2: number) => void;
     private readonly gridLayout: GridLayout;
     private readonly proxyConfig?: ProxyConfig;
 
-    constructor(skipUsernames: string[] = [], onUsernameGenerated: (username: string) => void = () => {}, initialIndex?: { phase: number; index1: number; index2: number }, onIndexUpdated: (phase: number, index1: number, index2: number) => void = () => {}, gridLayout?: GridLayout, proxyUrl?: string) {
+    constructor({ skipUsernames = [], onUsernameGenerated = () => {}, gridLayout, proxyUrl }: VLCMThreadOptions = {}) {
         super();
         this.threadId = crypto.randomUUID();
         this.skipUsernames = skipUsernames;
         this.onUsernameGenerated = onUsernameGenerated;
-        if (initialIndex) {
-            this.phase = initialIndex.phase;
-            this.index1 = initialIndex.index1;
-            this.index2 = initialIndex.index2;
-        } else {
-            this.phase = 1;
-            this.index1 = VLCMThread.nextStartIndex % LETTERS.length;
-            this.index2 = 0;
-            VLCMThread.nextStartIndex++;
-        }
-        this.onIndexUpdated = onIndexUpdated;
         this.gridLayout = gridLayout ?? { x: 0, y: 0, width: DEFAULT_GRID_WIDTH, height: DEFAULT_GRID_HEIGHT };
 
         if (proxyUrl) {
@@ -153,15 +139,16 @@ class VLCMThread extends EventEmitter {
     };
 
     private readonly generateUsername = async (usernamePrefix: string): Promise<string> => {
-        let username = this.getUsernameFromIndices(usernamePrefix);
+        let username = this.getRandomUsername(usernamePrefix);
         let isUsernameAvailable = false;
+        let attempts = 0;
+        const maxAttempts = 50;
 
-        while (!isUsernameAvailable && username.length < MAX_USERNAME_LENGTH) {
+        while (!isUsernameAvailable && username.length < MAX_USERNAME_LENGTH && attempts < maxAttempts) {
+            attempts++;
             if (this.skipUsernames.includes(username)) {
                 this.emit('progress', { threadId: this.threadId, message: 'bỏ qua username', username });
-                this.generateNextUsername();
-                username = this.getUsernameFromIndices(usernamePrefix);
-                this.onIndexUpdated(this.phase, this.index1, this.index2);
+                username = this.getRandomUsername(usernamePrefix);
                 continue;
             }
 
@@ -181,61 +168,31 @@ class VLCMThread extends EventEmitter {
                         isUsernameAvailable = true;
                         this.onUsernameGenerated(username);
                     } else {
-                        this.generateNextUsername();
-                        username = this.getUsernameFromIndices(usernamePrefix);
+                        username = this.getRandomUsername(usernamePrefix);
                     }
-                    this.onIndexUpdated(this.phase, this.index1, this.index2);
                     this.emit('progress', { threadId: this.threadId, message: 'tạo username', username });
                 }
             }
         }
 
+        if (!isUsernameAvailable) {
+            this.emit('progress', { threadId: this.threadId, message: 'không tìm được username' });
+            throw new Error('Could not find an available username.');
+        }
+
         return username;
     };
 
-    private readonly generateNextUsername = (): void => {
-        if (this.phase === PHASE_1) {
-            if (this.index1 < LETTERS.length - 1) {
-                this.index1++;
-            } else {
-                this.phase = PHASE_2;
-                this.index1 = 0;
-                this.index2 = 0;
-            }
-        } else if (this.phase === PHASE_2) {
-            if (this.index1 < LETTERS.length - 1) {
-                this.index2++;
-                if (this.index2 >= DIGITS.length) {
-                    this.index2 = 0;
-                    this.index1++;
-                }
-            } else {
-                this.phase = PHASE_3;
-                this.index1 = 0;
-                this.index2 = 0;
-            }
-        } else if (this.phase === PHASE_3) {
-            if (this.index1 < LETTERS.length - 1) {
-                this.index2++;
-                if (this.index2 >= LETTERS.length) {
-                    this.index2 = 0;
-                    this.index1++;
-                }
-            } else {
-                return;
-            }
-        }
-    };
+    private readonly getRandomUsername = (usernamePrefix: string): string => {
+        const remainingLength = MAX_USERNAME_LENGTH - usernamePrefix.length;
+        const suffixLength = Math.floor(Math.random() * Math.min(5, remainingLength - 1)) + 2;
 
-    private readonly getUsernameFromIndices = (usernamePrefix: string): string => {
-        if (this.phase === PHASE_1) {
-            return usernamePrefix + LETTERS[this.index1];
-        } else if (this.phase === PHASE_2) {
-            return usernamePrefix + LETTERS[this.index1] + DIGITS[this.index2];
-        } else if (this.phase === PHASE_3) {
-            return usernamePrefix + 'z' + LETTERS[this.index1] + LETTERS[this.index2];
+        const characters = 'abcdefghijklmnopqrstuvwxyz0123456789';
+        let suffix = '';
+        for (let i = 0; i < suffixLength; i++) {
+            suffix += characters.charAt(Math.floor(Math.random() * characters.length));
         }
-        return usernamePrefix;
+        return usernamePrefix + suffix;
     };
 
     registerVLCM = async (usernamePrefix: string) => {

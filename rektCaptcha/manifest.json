@@ -1,8 +1,8 @@
 {
-    "update_url": "https://clients2.google.com/service/update2/crx",
     "manifest_version": 3,
     "name": "rektCaptcha: reCaptcha Solver",
     "version": "0.1.0",
+    "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAzrzs9PrM7scxJLv+w68qAK7aOxM7PJjeFm6n60N4OSMok5c7hhR4giiyQyaieECadA47WKpO1vgDrEN/o/8hl17B2rKnsPcdOedNxe9PzlhSgmhUOSOKKB6PbcIFRJNr5LUBtCAKsJVaBHVyjzffQKMOHbRBi2jQ7II59oPHpAydRKcAcBmaxodTcfR3vjCvtKau+fC0BDK01Nsy0p7E2GPbFv4BggkAqTIpofN43wZX/8AJq8Y4c4TZ4gu0Fk6cI71QDOxNbJakELj9WmnvUIcMzWw4o/xZ67COLMCalesJlA7lSaNUcnyI3Nfp5Y4wzaTjDNkkmF600yKcnE1pAQIDAQAB",
     "description": "Automatically solve reCaptcha using AI.",
     "icons": { "16": "icons/icon_16.png", "32": "icons/icon_32.png", "48": "icons/icon_48.png", "128": "icons/icon_128.png" },
     "action": { "default_title": "rektCaptcha", "default_popup": "popup.html" },

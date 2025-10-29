@@ -1,25 +1,33 @@
-import type { FC } from 'react';
-import { useRef, useState, useLayoutEffect } from 'react';
+import Frog1Image from '@/assets/images/frog-1.png';
 import AccountRow from '@/components/account-row';
 import { useAppStore } from '@/store';
-import { faUser, faLock, faCircleInfo, faGear, faFileExport } from '@fortawesome/free-solid-svg-icons';
+import { faCircleInfo, faFileExport, faGear, faLock, faUser } from '@fortawesome/free-solid-svg-icons';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import Frog1Image from '@/assets/images/frog-1.png';
+import type { FC } from 'react';
+import { useLayoutEffect, useRef, useState } from 'react';
 
 const AccountTable: FC = () => {
     const { accounts } = useAppStore();
-    const containerRef = useRef<HTMLDivElement>(null);
-    const headerRef = useRef<HTMLDivElement>(null);
-    const bodyRef = useRef<HTMLDivElement>(null);
-    const [bodyHeight, setBodyHeight] = useState<number>(0);
     const [isExporting, setIsExporting] = useState(false);
+
+    const containerRef = useRef<HTMLDivElement>(null);
+    const [maxHeight, setMaxHeight] = useState<string>('auto');
+
+    useLayoutEffect(() => {
+        if (containerRef.current) {
+            const initialHeight = containerRef.current.offsetHeight;
+            if (maxHeight === 'auto') {
+                setMaxHeight(`${initialHeight}px`);
+            }
+        }
+    }, [containerRef.current]);
 
     const handleExport = async () => {
         if (isExporting) return;
 
         setIsExporting(true);
         try {
-            const accountsToExport = accounts.filter((acc) => acc.username && acc.password).map((acc) => ({ username: acc.username, password: acc.password }));
+            const accountsToExport = accounts.filter((acc) => acc.message === 'done' && acc.username && acc.password).map((acc) => ({ username: acc.username, password: acc.password }));
 
             if (accountsToExport.length === 0) {
                 await window.electron?.showMessageBox({
@@ -55,34 +63,9 @@ const AccountTable: FC = () => {
         }
     };
 
-    useLayoutEffect(() => {
-        const measureHeight = () => {
-            if (containerRef.current && headerRef.current && bodyRef.current) {
-                const containerHeight = containerRef.current.clientHeight;
-                const headerHeight = headerRef.current.offsetHeight;
-                const availableHeight = containerHeight - headerHeight;
-                setBodyHeight(Math.max(availableHeight, 0));
-            }
-        };
-
-        measureHeight();
-
-        const resizeObserver = new ResizeObserver(() => {
-            measureHeight();
-        });
-
-        if (containerRef.current) {
-            resizeObserver.observe(containerRef.current);
-        }
-
-        return () => {
-            resizeObserver.disconnect();
-        };
-    }, [accounts]);
-
     if (accounts.length === 0) {
         return (
-            <div ref={containerRef} className='flex flex-1 items-center justify-center rounded-lg border border-emerald-200 bg-linear-to-br from-white to-emerald-50 shadow-sm'>
+            <div className='flex flex-1 items-center justify-center rounded-lg border border-emerald-200 bg-linear-to-br from-white to-emerald-50 shadow-sm'>
                 <div className='flex flex-col items-center gap-4'>
                     <img src={Frog1Image} alt='empty' className='h-32 w-32' />
                     <p className='text-xl font-semibold text-emerald-500'>Ếch đang đợi bạn nhấn RUN</p>
@@ -92,7 +75,7 @@ const AccountTable: FC = () => {
     }
 
     return (
-        <div ref={containerRef} className='flex flex-1 flex-col overflow-hidden rounded-lg border border-emerald-200 bg-white shadow-sm'>
+        <div className='flex flex-1 flex-col overflow-hidden rounded-lg border border-emerald-200 bg-white shadow-sm'>
             <div className='flex items-center justify-between border-b border-emerald-200 bg-linear-to-r from-emerald-50 to-emerald-100 px-4 py-2'>
                 <h3 className='text-sm font-semibold text-emerald-900'>Danh sách tài khoản ({accounts.length})</h3>
                 <button onClick={handleExport} disabled={isExporting || accounts.length === 0} className='flex items-center gap-2 rounded-md bg-emerald-500 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-50'>
@@ -101,7 +84,7 @@ const AccountTable: FC = () => {
                 </button>
             </div>
 
-            <div ref={headerRef} className='grid grid-cols-[3rem_15rem_15rem_1fr_0.2fr] gap-0 border-b border-emerald-200 bg-linear-to-r from-emerald-50 to-emerald-100'>
+            <div className='grid grid-cols-[3rem_15rem_15rem_1fr_0.2fr] gap-0 border-b border-emerald-200 bg-linear-to-r from-emerald-50 to-emerald-100'>
                 <div className='px-4 py-3 text-left text-sm font-semibold text-emerald-900'>#</div>
                 <div className='px-4 py-3 text-left text-sm font-semibold text-emerald-900'>
                     <div className='flex items-center gap-2'>
@@ -126,7 +109,7 @@ const AccountTable: FC = () => {
                 </div>
             </div>
 
-            <div ref={bodyRef} className='overflow-x-hidden overflow-y-auto' style={{ height: `${bodyHeight}px` }}>
+            <div ref={containerRef} style={{ maxHeight: maxHeight }} className='flex-1 overflow-x-hidden overflow-y-auto'>
                 <div className='grid grid-cols-[3rem_15rem_15rem_1fr_0.2fr] gap-0'>
                     {accounts.map((account, index) => (
                         <AccountRow key={account.id} account={account} index={index} />
