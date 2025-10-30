@@ -1,7 +1,16 @@
-import { app } from 'electron';
 import { join } from 'node:path';
 import * as ort from 'onnxruntime-node';
 import sharp from 'sharp';
+
+const getElectronApp = (): { isPackaged: boolean } | undefined => {
+    try {
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        const electron = require('electron');
+        return electron.app;
+    } catch {
+        return undefined;
+    }
+};
 
 class ZingCaptchaSolver {
     private static readonly CHAR_SET = ['3', '6', '7', '8', '9', 'B', 'D', 'E', 'F', 'H', 'K', 'M', 'N', 'P', 'R', 'T', 'U', 'V', 'W', 'X', 'Y'];
@@ -9,10 +18,17 @@ class ZingCaptchaSolver {
     private static readonly IDX_TO_CHAR = Object.fromEntries(ZingCaptchaSolver.CHAR_SET.map((c, i) => [i, c]));
 
     private session: ort.InferenceSession | null = null;
-    private readonly modelPath = app.isPackaged ? join(process.resourcesPath, 'models/zing-captcha-crnn-ocr.onnx') : join(process.cwd(), 'models/zing-captcha-crnn-ocr.onnx');
+    private modelPath: string | null = null;
+
+    private readonly getModelPath = (): string => {
+        if (this.modelPath) return this.modelPath;
+        const app = getElectronApp();
+        this.modelPath = app?.isPackaged ? join(process.resourcesPath, 'models/zing-captcha-crnn-ocr.onnx') : join(process.cwd(), 'models/zing-captcha-crnn-ocr.onnx');
+        return this.modelPath;
+    };
 
     async solve(url: string): Promise<string> {
-        this.session ??= await ort.InferenceSession.create(this.modelPath);
+        this.session ??= await ort.InferenceSession.create(this.getModelPath());
 
         const response = await fetch(url);
         if (!response.ok) throw new Error(`lỗi fetch: ${response.status}`);

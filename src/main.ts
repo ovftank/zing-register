@@ -88,9 +88,6 @@ const createWindow = (options?: { x?: number; y?: number; width?: number; height
     } else {
         window.loadFile(path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}/index.html`));
     }
-
-    window.webContents.openDevTools();
-
     return window;
 };
 
@@ -131,31 +128,36 @@ app.on('ready', () => {
                     }
 
                     const threadPromise = (async () => {
-                        const onUsernameGenerated = (username: string) => {
-                            skipUsernames.push(username);
-                        };
-                        const vlcmThread = new VLCMThread({
-                            skipUsernames,
-                            onUsernameGenerated,
-                            gridLayout: {
-                                x: position.x,
-                                y: position.y,
-                                width: windowWidth,
-                                height: windowHeight
-                            },
-                            proxyUrl
-                        });
-                        await vlcmThread.init();
+                        try {
+                            const onUsernameGenerated = (username: string) => {
+                                skipUsernames.push(username);
+                            };
+                            const vlcmThread = new VLCMThread({
+                                skipUsernames,
+                                onUsernameGenerated,
+                                gridLayout: {
+                                    x: position.x,
+                                    y: position.y,
+                                    width: windowWidth,
+                                    height: windowHeight
+                                },
+                                proxyUrl
+                            });
+                            await vlcmThread.init();
 
-                        vlcmThread.on('progress', (data) => {
-                            mainWindow?.webContents.send('vlcm:progress', data);
-                        });
+                            vlcmThread.on('progress', (data) => {
+                                mainWindow?.webContents.send('vlcm:progress', data);
+                            });
 
-                        const result = await vlcmThread.registerVLCM(usernamePrefix);
-                        if (result) {
-                            skipUsernames.push(result.username);
+                            const result = await vlcmThread.registerVLCM(usernamePrefix);
+                            if (result) {
+                                skipUsernames.push(result.username);
+                            }
+                            return result;
+                        } catch (error) {
+                            console.error('lỗi thread:', error);
+                            return null;
                         }
-                        return result;
                     })();
 
                     threads.push(threadPromise);
@@ -176,8 +178,9 @@ app.on('ready', () => {
             }
 
             return allResults;
-        } catch {
-            //
+        } catch (error) {
+            console.error('lỗi register:', error);
+            throw error;
         }
     });
 

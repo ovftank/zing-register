@@ -1,9 +1,18 @@
 import ZingCaptchaSolver from '@/module/zing-captcha-solver';
-import { app } from 'electron';
 import { EventEmitter } from 'node:events';
 import path from 'node:path';
-import type { GhostBrowser, GhostPage } from 'puppeteer-ghost';
-import puppeteer from 'puppeteer-ghost';
+import type { Browser, LaunchOptions, Page } from 'puppeteer';
+import puppeteer from 'puppeteer';
+
+const getElectronApp = (): { isPackaged: boolean } | undefined => {
+    try {
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        const electron = require('electron');
+        return electron.app;
+    } catch {
+        return undefined;
+    }
+};
 
 const MAX_USERNAME_LENGTH = 24;
 const PASSWORD_LENGTH = 24;
@@ -32,8 +41,8 @@ interface VLCMThreadOptions {
 }
 
 class VLCMThread extends EventEmitter {
-    private page: GhostPage | null = null;
-    private browser: GhostBrowser | null = null;
+    private page: Page | null = null;
+    private browser: Browser | null = null;
     private readonly captchaSolver = new ZingCaptchaSolver();
     private readonly threadId: string;
     private readonly skipUsernames: string[];
@@ -98,35 +107,49 @@ class VLCMThread extends EventEmitter {
     };
     init = async () => {
         if (this.browser) {
+            console.log('browser already initialized');
             return;
         }
         try {
+            console.log('initializing browser...');
             this.emit('progress', { threadId: this.threadId, message: 'mở trình duyệt...' });
-            const extensionPath = app.isPackaged ? path.join(process.resourcesPath, 'rektCaptcha') : path.join(process.cwd(), 'rektCaptcha');
-            const launchOptions: {
-                pipe: boolean;
-                enableExtensions: string[];
-                args: string[];
-                proxy?: ProxyConfig;
-            } = {
+            const app = getElectronApp();
+            const extensionPath = app?.isPackaged ? path.join(process.resourcesPath, 'rektCaptcha') : path.join(process.cwd(), 'rektCaptcha');
+            console.log('extension path:', extensionPath);
+            const launchOptions: LaunchOptions = {
                 pipe: true,
-                enableExtensions: [extensionPath],
-                args: [`--window-position=${this.gridLayout.x},${this.gridLayout.y}`, `--window-size=${this.gridLayout.width},${this.gridLayout.height}`]
+                defaultViewport: null,
+                headless: false,
+                args: [`--window-position=${this.gridLayout.x},${this.gridLayout.y}`, `--window-size=${this.gridLayout.width},${this.gridLayout.height}`, '--disable-features=Translate', `--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`]
             };
 
             if (this.proxyConfig) {
-                launchOptions.proxy = this.proxyConfig;
                 this.emit('progress', { threadId: this.threadId, message: `dùng proxy: ${this.proxyConfig.server}` });
+                launchOptions.args.push(`--proxy-server=${this.proxyConfig.server}`);
             }
 
+            console.log('launch options:', JSON.stringify(launchOptions, null, 2));
             this.browser = await puppeteer.launch(launchOptions);
+            console.log('browser launched');
             this.page = await this.browser.newPage();
+            console.log('page created');
+
+            if (this.proxyConfig?.username && this.proxyConfig?.password) {
+                await this.page.authenticate({
+                    username: this.proxyConfig.username,
+                    password: this.proxyConfig.password
+                });
+            }
+
             await this.page.setViewport({
                 width: 1920,
                 height: 1080
             });
-        } catch {
+            console.log('init done');
+        } catch (error) {
+            console.error('init browser error:', error);
             this.emit('progress', { threadId: this.threadId, message: 'mở fail' });
+            throw error;
         }
     };
     private readonly genRandomPassword = () => {
@@ -152,26 +175,33 @@ class VLCMThread extends EventEmitter {
                 continue;
             }
 
-            await this.page?.$eval('#reg_account', (el) => ((el as HTMLInputElement).value = ''));
-            await this.page?.keyboard.type(username);
+            await this.page?.locator('#reg_account').fill(username);
 
-            const response = await this.page?.waitForResponse((res) => res.url().startsWith('https://id.zing.vn/v2/uname-suggestion') && res.url().includes(`username=${username}`));
+            this.emit('progress', { threadId: this.threadId, message: `checking username: ${username}` });
 
-            if (response) {
-                const responseText = await response.text();
-                const startIndex = responseText.indexOf('(');
-                const endIndex = responseText.lastIndexOf(')');
-                if (startIndex !== -1 && endIndex !== -1) {
-                    const jsonString = responseText.substring(startIndex + 1, endIndex);
-                    const data = JSON.parse(jsonString);
-                    if (data.err === '1') {
-                        isUsernameAvailable = true;
-                        this.onUsernameGenerated(username);
-                    } else {
-                        username = this.getRandomUsername(usernamePrefix);
+            try {
+                const response = await this.page?.waitForResponse((res) => res.url().startsWith('https://id.zing.vn/v2/uname-suggestion') && res.url().includes(`username=${username}`), { timeout: 10000 });
+
+                if (response) {
+                    const responseText = await response.text();
+                    const startIndex = responseText.indexOf('(');
+                    const endIndex = responseText.lastIndexOf(')');
+                    if (startIndex !== -1 && endIndex !== -1) {
+                        const jsonString = responseText.substring(startIndex + 1, endIndex);
+                        const data = JSON.parse(jsonString);
+                        if (data.err === '1') {
+                            isUsernameAvailable = true;
+                            this.onUsernameGenerated(username);
+                        } else {
+                            username = this.getRandomUsername(usernamePrefix);
+                        }
+                        this.emit('progress', { threadId: this.threadId, message: 'tạo username', username });
                     }
-                    this.emit('progress', { threadId: this.threadId, message: 'tạo username', username });
                 }
+            } catch {
+                this.emit('progress', { threadId: this.threadId, message: `timeout check username: ${username}, clear và gõ lại` });
+                await this.page?.locator('#reg_account').fill('');
+                username = this.getRandomUsername(usernamePrefix);
             }
         }
 
@@ -200,76 +230,32 @@ class VLCMThread extends EventEmitter {
             return null;
         }
 
-        this.emit('progress', { threadId: this.threadId, message: 'vào web' });
-        await this.page?.goto('https://vlcm.zing.vn');
-
-        this.emit('progress', { threadId: this.threadId, message: 'bypass tracking' });
-        await this.page?.waitForSelector('#zme-registerwg');
-        await this.page?.click('#zme-registerwg', {
-            paddingPercentage: 100
-        });
-        const password = this.genRandomPassword();
-        await this.page?.waitForSelector('#reg_account');
-        await this.page?.addStyleTag({
-            content: `#suggestBox{display:none!important}`
-        });
-        await this.page?.click('.Close');
-        await this.page?.click('#zme-registerwg', {
-            paddingPercentage: 100
-        });
-        await this.page?.waitForSelector('#reg_account');
-
-        await this.page?.click('#reg_account');
-
-        const username = await this.generateUsername(usernamePrefix);
-
-        await this.page?.click('#reg_pwd');
-        await this.page?.keyboard.type(password);
-
-        await this.page?.click('#reg_cpwd');
-        await this.page?.keyboard.type(password);
-
-        this.emit('progress', {
-            threadId: this.threadId,
-            message: 'đang nhập pass',
-            username,
-            password
-        });
-
-        this.emit('progress', { threadId: this.threadId, message: 'giải captcha', username, password });
-        const captchaImg = await this.page?.$('#captcha');
-        if (captchaImg) {
-            const srcProperty = await captchaImg.getProperty('src');
-            const captchaSrc = await srcProperty.jsonValue();
-
-            const result = await this.captchaSolver.solve(captchaSrc as string);
-            this.emit('progress', { threadId: this.threadId, message: `captcha: ${result}`, username, password });
-            await this.page?.click('#veryfied_code');
-            await this.page?.keyboard.type(result);
-        }
-
-        await this.page?.click('#reg_account');
-        this.emit('progress', { threadId: this.threadId, message: 'bypass 360game', username, password });
-        await this.page?.click('#btn-register');
         try {
-            await this.page?.waitForRequest((request) => request.url().startsWith('http://360game.vn/auth/login-redirect'));
-        } catch {
-            await this.page.locator('.Close').click({
-                count: 2
+            this.emit('progress', { threadId: this.threadId, message: 'vào web' });
+            await this.page?.goto('https://vlcm.zing.vn');
+
+            this.emit('progress', { threadId: this.threadId, message: 'bypass tracking' });
+            this.emit('progress', { threadId: this.threadId, message: 'wait #zme-registerwg' });
+            await this.page?.locator('#zme-registerwg').click();
+            const password = this.genRandomPassword();
+            this.emit('progress', { threadId: this.threadId, message: 'wait #reg_account (1)' });
+            await this.page?.locator('#reg_account').wait();
+            await this.page?.addStyleTag({
+                content: `#suggestBox{display:none!important}`
             });
-            await this.page?.click('#zme-registerwg', {
-                paddingPercentage: 100
-            });
-            await this.page?.waitForSelector('#reg_account');
+            await this.page?.locator('.Close').click();
+            await this.page?.locator('#zme-registerwg').click();
+            this.emit('progress', { threadId: this.threadId, message: 'wait #reg_account (2)' });
+            await this.page?.locator('#reg_account').wait();
 
-            await this.page?.click('#reg_account');
-            await this.page?.keyboard.type(username);
+            await this.page?.locator('#reg_account').click();
 
-            await this.page?.click('#reg_pwd');
-            await this.page?.keyboard.type(password);
+            this.emit('progress', { threadId: this.threadId, message: 'generate username...' });
+            const username = await this.generateUsername(usernamePrefix);
 
-            await this.page?.click('#reg_cpwd');
-            await this.page?.keyboard.type(password);
+            this.emit('progress', { threadId: this.threadId, message: 'input password...' });
+            await this.page?.locator('#reg_pwd').fill(password);
+            await this.page?.locator('#reg_cpwd').fill(password);
 
             this.emit('progress', {
                 threadId: this.threadId,
@@ -279,35 +265,82 @@ class VLCMThread extends EventEmitter {
             });
 
             this.emit('progress', { threadId: this.threadId, message: 'giải captcha', username, password });
-            const captchaImg = await this.page?.$('#captcha');
-            if (captchaImg) {
-                const srcProperty = await captchaImg.getProperty('src');
+            const captchaHandle = await this.page?.locator('#captcha').waitHandle();
+            if (captchaHandle) {
+                this.emit('progress', { threadId: this.threadId, message: 'get captcha src...', username, password });
+                const srcProperty = await captchaHandle.getProperty('src');
                 const captchaSrc = await srcProperty.jsonValue();
 
+                this.emit('progress', { threadId: this.threadId, message: 'solving captcha...', username, password });
                 const result = await this.captchaSolver.solve(captchaSrc as string);
                 this.emit('progress', { threadId: this.threadId, message: `captcha: ${result}`, username, password });
-                await this.page?.click('#veryfied_code');
-                await this.page?.keyboard.type(result);
+                await this.page?.locator('#veryfied_code').fill(result);
             }
 
-            await this.page?.click('#reg_account');
+            await this.page?.locator('#reg_account').click();
             this.emit('progress', { threadId: this.threadId, message: 'bypass 360game', username, password });
-            await this.page?.click('#btn-register');
-            await this.page?.waitForRequest((request) => request.url().startsWith('http://360game.vn/auth/login-redirect'));
-        }
-        await this.page?.goto('https://id.zing.vn/');
+            await this.page?.locator('#btn-register').click();
+            this.emit('progress', { threadId: this.threadId, message: 'waiting for 360game redirect...', username, password });
+            try {
+                await this.page?.waitForRequest((request) => request.url().startsWith('http://360game.vn/auth/login-redirect'), { timeout: 30000 });
+                this.emit('progress', { threadId: this.threadId, message: '360game redirect ok', username, password });
+            } catch {
+                this.emit('progress', { threadId: this.threadId, message: `360game fail, retry...`, username, password });
+                try {
+                    this.emit('progress', { threadId: this.threadId, message: 'đóng popup...', username, password });
+                    await this.page?.locator('.Close').setTimeout(5000).click();
 
-        try {
-            await this.page?.waitForFunction('window.location.href.startsWith("https://id.zing.vn/v2/inforequire?")', { timeout: TIMEOUT_MS });
+                    this.emit('progress', { threadId: this.threadId, message: 'mở lại form register...', username, password });
+                    await this.page?.locator('#zme-registerwg').click();
+                    await this.page?.locator('#reg_account').wait();
+
+                    this.emit('progress', { threadId: this.threadId, message: 'nhập lại thông tin...', username, password });
+                    await this.page?.locator('#reg_account').fill(username);
+                    await this.page?.locator('#reg_pwd').fill(password);
+                    await this.page?.locator('#reg_cpwd').fill(password);
+
+                    this.emit('progress', { threadId: this.threadId, message: 'giải captcha (retry)', username, password });
+                    const retryCaptchaHandle = await this.page?.locator('#captcha').setTimeout(5000).waitHandle();
+                    if (retryCaptchaHandle) {
+                        const srcProperty = await retryCaptchaHandle.getProperty('src');
+                        const captchaSrc = await srcProperty.jsonValue();
+                        const result = await this.captchaSolver.solve(captchaSrc as string);
+                        this.emit('progress', { threadId: this.threadId, message: `captcha: ${result}`, username, password });
+                        await this.page?.locator('#veryfied_code').fill(result);
+                    }
+
+                    await this.page?.locator('#reg_account').click();
+                    this.emit('progress', { threadId: this.threadId, message: 'submit lại...', username, password });
+                    await this.page?.locator('#btn-register').click();
+                    this.emit('progress', { threadId: this.threadId, message: 'chờ 360game redirect (retry)...', username, password });
+                    await this.page?.waitForRequest((request) => request.url().startsWith('http://360game.vn/auth/login-redirect'), { timeout: 30000 });
+                    this.emit('progress', { threadId: this.threadId, message: '360game redirect ok (retry)', username, password });
+                } catch {
+                    this.emit('progress', { threadId: this.threadId, message: `retry fail, skip`, username, password });
+                }
+            }
+            this.emit('progress', { threadId: this.threadId, message: 'goto id.zing.vn...', username, password });
+            await this.page?.goto('https://id.zing.vn/');
+
+            this.emit('progress', { threadId: this.threadId, message: 'waiting for redirect to inforequire...', username, password });
+            try {
+                await this.page?.waitForFunction('window.location.href.startsWith("https://id.zing.vn/v2/inforequire?")', { timeout: TIMEOUT_MS });
+                this.emit('progress', { threadId: this.threadId, message: 'redirect ok', username, password });
+                await this.cleanup();
+                this.emit('progress', { threadId: this.threadId, message: 'done', username, password });
+                return {
+                    username,
+                    password
+                };
+            } catch (error) {
+                this.emit('progress', { threadId: this.threadId, message: `fail at inforequire: ${error}`, username, password });
+                await this.cleanup();
+                return null;
+            }
+        } catch (error) {
+            this.emit('progress', { threadId: this.threadId, message: `error: ${error}` });
             await this.cleanup();
-            this.emit('progress', { threadId: this.threadId, message: 'done', username, password });
-            return {
-                username,
-                password
-            };
-        } catch {
-            this.emit('progress', { threadId: this.threadId, message: 'fail', username, password });
-            return null;
+            throw error;
         }
     };
 }
