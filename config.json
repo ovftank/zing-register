@@ -1,0 +1,9 @@
+{
+	"prefix": "conmeoxau",
+	"random_password": true,
+	"password": null,
+	"password_length": 8,
+	"threads": 2,
+	"account_limit": 10000,
+	"log_file": "status.log"
+}
