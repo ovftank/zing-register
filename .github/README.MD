@@ -1,5 +1,5 @@
 # zing-register [@ovftank](https://t.me/ovftank)
-
+trash, use [python-version](https://github.com/ovftank/zing-register/tree/python-version)
 ## Scripts
 
 | Command       | Description                      |
